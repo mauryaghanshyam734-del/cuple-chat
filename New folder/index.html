@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Couple Chat</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main class="app">
+      <section class="phone" aria-label="Couple chat app">
+        <div class="topbar">
+          <div class="avatar">C</div>
+          <div>
+            <h1>Couple Chat</h1>
+            <p id="status">Create or join a private room</p>
+          </div>
+          <button id="copyRoom" class="icon-btn" title="Copy secure invite link" aria-label="Copy secure invite link">
+            <span>Link</span>
+          </button>
+        </div>
+
+        <form id="joinForm" class="join-panel">
+          <label>
+            Your name
+            <input id="nameInput" autocomplete="name" maxlength="28" placeholder="Aarav" required />
+          </label>
+          <label>
+            Secure room code
+            <input id="roomInput" autocomplete="off" maxlength="80" placeholder="LOVE-ABCD-M7K9-P2Q4" required />
+          </label>
+          <div class="secure-note">End-to-end encrypted messages. Share the secure room code with your partner.</div>
+          <div class="actions">
+            <button type="button" id="makeCode">Make code</button>
+            <button type="submit" class="primary">Join chat</button>
+          </div>
+        </form>
+
+        <section id="chatPanel" class="chat-panel" hidden>
+          <div id="messages" class="messages" aria-live="polite"></div>
+          <div id="typing" class="typing"></div>
+          <form id="messageForm" class="composer">
+            <input id="messageInput" autocomplete="off" maxlength="1200" placeholder="Message..." />
+            <button class="send" aria-label="Send message">Send</button>
+          </form>
+        </section>
+      </section>
+    </main>
+    <script src="app.js"></script>
+  </body>
+</html>
