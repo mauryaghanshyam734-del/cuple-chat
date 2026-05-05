@@ -40,6 +40,8 @@
           <div id="messages" class="messages" aria-live="polite"></div>
           <div id="typing" class="typing"></div>
           <form id="messageForm" class="composer">
+            <input id="imageInput" type="file" accept="image/*" hidden />
+            <button type="button" id="imageButton" class="tool-btn" aria-label="Send encrypted image">Image</button>
             <input id="messageInput" autocomplete="off" maxlength="1200" placeholder="Message..." />
             <button class="send" aria-label="Send message">Send</button>
           </form>
