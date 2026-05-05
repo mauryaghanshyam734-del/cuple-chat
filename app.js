@@ -453,7 +453,7 @@ joinForm.addEventListener("submit", async (event) => {
   const invite = parseInvite(roomInput.value);
   state.room = invite.room;
   state.inviteCode = invite.inviteCode || invite.room;
-  state.keyText = invite.keyText || state.keyText;
+  state.keyText = invite.keyText || "";
   state.cryptoKey = null;
   if (!state.name || !state.room) return;
 
@@ -520,4 +520,5 @@ if (state.room) {
   const savedCode = localStorage.getItem(`couple-chat-code-${state.room}`);
   roomInput.value = savedCode || state.room;
   state.inviteCode = savedCode || state.room;
+  if (savedCode) state.keyText = "";
 }
