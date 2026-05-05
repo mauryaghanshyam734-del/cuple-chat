@@ -29,7 +29,7 @@ def clean_name(value):
 
 
 def clean_text(value):
-    return str(value or "").strip()[:10000]
+    return str(value or "").strip()[:7000000]
 
 
 def get_room(room_id):
@@ -87,6 +87,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def read_json(self):
         length = int(self.headers.get("Content-Length", "0"))
+        if length > 7500000:
+            raise ValueError("Payload too large")
         if not length:
             return {}
         return json.loads(self.rfile.read(length).decode("utf-8"))
@@ -183,6 +185,8 @@ class Handler(BaseHTTPRequestHandler):
                 "sender": sender,
                 "text": text,
                 "sentAt": datetime.now(timezone.utc).isoformat(),
+                "editedAt": None,
+                "deleted": False,
                 "deliveredTo": [],
                 "seenBy": [],
             }
@@ -196,6 +200,54 @@ class Handler(BaseHTTPRequestHandler):
             broadcast(room_id, "message", message)
             broadcast(room_id, "typing", {"names": sorted(room["typing"])})
             self.send_json(201, {"ok": True, "message": message})
+            return
+
+        if parsed.path == "/edit":
+            room_id = clean_room(body.get("room"))
+            sender = clean_name(body.get("sender"))
+            message_id = str(body.get("id") or "")
+            text = clean_text(body.get("text"))
+            if not room_id or not message_id or not text:
+                self.send_json(400, {"error": "Room, message id, and text required"})
+                return
+            room = get_room(room_id)
+            updated = None
+            with lock:
+                for message in room["messages"]:
+                    if message["id"] == message_id and message["sender"] == sender and not message.get("deleted"):
+                        message["text"] = text
+                        message["editedAt"] = datetime.now(timezone.utc).isoformat()
+                        updated = message
+                        break
+            if not updated:
+                self.send_json(404, {"error": "Message not found"})
+                return
+            broadcast(room_id, "message_edit", updated)
+            self.send_json(200, {"ok": True, "message": updated})
+            return
+
+        if parsed.path == "/delete":
+            room_id = clean_room(body.get("room"))
+            sender = clean_name(body.get("sender"))
+            message_id = str(body.get("id") or "")
+            if not room_id or not message_id:
+                self.send_json(400, {"error": "Room and message id required"})
+                return
+            room = get_room(room_id)
+            updated = None
+            with lock:
+                for message in room["messages"]:
+                    if message["id"] == message_id and message["sender"] == sender and not message.get("deleted"):
+                        message["text"] = ""
+                        message["deleted"] = True
+                        message["editedAt"] = datetime.now(timezone.utc).isoformat()
+                        updated = message
+                        break
+            if not updated:
+                self.send_json(404, {"error": "Message not found"})
+                return
+            broadcast(room_id, "message_delete", updated)
+            self.send_json(200, {"ok": True, "message": updated})
             return
 
         if parsed.path == "/seen":
