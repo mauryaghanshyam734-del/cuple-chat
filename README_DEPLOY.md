@@ -31,6 +31,16 @@ https://your-app-name.onrender.com
 
 Anyone can open that URL on any phone, enter their name and the secure room code, and chat.
 
+## Features
+
+- Realtime chat with Server-Sent Events.
+- Browser-side AES-GCM encryption for text and images.
+- Secure room code based key derivation with PBKDF2-SHA-256.
+- Seen/delivered receipts.
+- Edit text messages.
+- Unsend messages for everyone.
+- Send encrypted images up to 2 MB.
+
 ## Security note
 
-Message text is encrypted in the browser with AES-GCM. The server stores/transmits encrypted text only. The secure room code is also the secret used to derive the encryption key, so do not share it publicly. Room metadata, sender names, delivery status, and seen status are visible to the server.
+Message text and images are encrypted in the browser with AES-GCM. The server stores/transmits encrypted payloads only. The secure room code is also the secret used to derive the encryption key, so do not share it publicly. Room metadata, sender names, delivery status, seen status, edits, and unsend actions are visible to the server.
