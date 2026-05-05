@@ -3,6 +3,8 @@ const chatPanel = document.querySelector("#chatPanel");
 const messagesEl = document.querySelector("#messages");
 const messageForm = document.querySelector("#messageForm");
 const messageInput = document.querySelector("#messageInput");
+const imageInput = document.querySelector("#imageInput");
+const imageButton = document.querySelector("#imageButton");
 const nameInput = document.querySelector("#nameInput");
 const roomInput = document.querySelector("#roomInput");
 const makeCode = document.querySelector("#makeCode");
@@ -12,6 +14,7 @@ const typingEl = document.querySelector("#typing");
 
 const url = new URL(window.location.href);
 const hash = new URLSearchParams(window.location.hash.slice(1));
+const MAX_IMAGE_BYTES = 2_000_000;
 
 let state = {
   name: localStorage.getItem("couple-chat-name") || "",
@@ -28,6 +31,14 @@ let state = {
 nameInput.value = state.name;
 roomInput.value = state.room;
 
+function cleanCode(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9-]/g, "")
+    .slice(0, 80);
+}
+
 function parseInvite(value) {
   const raw = String(value || "").trim();
   try {
@@ -43,22 +54,19 @@ function parseInvite(value) {
   }
 }
 
-function cleanCode(value) {
-  return String(value || "")
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9-]/g, "")
-    .slice(0, 80);
-}
-
 function bytesToBase64Url(bytes) {
-  const text = String.fromCharCode(...new Uint8Array(bytes));
-  return btoa(text).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  const view = new Uint8Array(bytes);
+  let binary = "";
+  for (let index = 0; index < view.length; index += 0x8000) {
+    binary += String.fromCharCode(...view.subarray(index, index + 0x8000));
+  }
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
 function base64UrlToBytes(value) {
   const padded = value.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(value.length / 4) * 4, "=");
-  return Uint8Array.from(atob(padded), (char) => char.charCodeAt(0));
+  const binary = atob(padded);
+  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
 }
 
 async function makeCryptoKey() {
@@ -101,38 +109,36 @@ async function ensureKey() {
   if (!state.keyText && state.room) {
     state.keyText = localStorage.getItem(`couple-chat-key-${state.room}`) || "";
   }
-  if (state.keyText) {
-    state.cryptoKey = await importCryptoKey(state.keyText);
-  } else if (state.inviteCode) {
-    state.cryptoKey = await deriveCryptoKey(state.inviteCode, state.room);
-  } else {
-    state.cryptoKey = await makeCryptoKey();
-  }
+  if (state.keyText) state.cryptoKey = await importCryptoKey(state.keyText);
+  else if (state.inviteCode) state.cryptoKey = await deriveCryptoKey(state.inviteCode, state.room);
+  else state.cryptoKey = await makeCryptoKey();
   return state.cryptoKey;
 }
 
-async function encryptText(text) {
+async function encryptPayload(payload) {
   const key = await ensureKey();
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const encoded = new TextEncoder().encode(text);
+  const encoded = new TextEncoder().encode(JSON.stringify(payload));
   const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, encoded);
-  return JSON.stringify({ v: 1, alg: "AES-GCM", iv: bytesToBase64Url(iv), data: bytesToBase64Url(encrypted) });
+  return JSON.stringify({ v: 2, alg: "AES-GCM", iv: bytesToBase64Url(iv), data: bytesToBase64Url(encrypted) });
 }
 
-async function decryptText(value) {
+async function decryptPayload(value) {
   try {
     const payload = JSON.parse(value);
-    if (payload.v !== 1 || !payload.iv || !payload.data) return value;
+    if (!payload.iv || !payload.data) return { kind: "text", text: value };
     const key = await ensureKey();
     const decrypted = await crypto.subtle.decrypt(
       { name: "AES-GCM", iv: base64UrlToBytes(payload.iv) },
       key,
       base64UrlToBytes(payload.data),
     );
-    return new TextDecoder().decode(decrypted);
+    const decoded = new TextDecoder().decode(decrypted);
+    if (payload.v === 1) return { kind: "text", text: decoded };
+    return JSON.parse(decoded);
   } catch {
-    if (String(value).startsWith("{")) return "[Encrypted message - open the correct invite link]";
-    return value;
+    if (String(value).startsWith("{")) return { kind: "text", text: "[Encrypted message - wrong room code]" };
+    return { kind: "text", text: value };
   }
 }
 
@@ -189,6 +195,7 @@ function removeEmpty() {
 
 function statusText(message) {
   if (message.sender !== state.name) return "";
+  if (message.deleted) return "Unsent";
   if ((message.seenBy || []).length) return "Seen";
   if ((message.deliveredTo || []).length) return "Delivered";
   return "Sent";
@@ -215,9 +222,60 @@ function scheduleSeen() {
   }, 250);
 }
 
+async function renderMessageBody(message, bubble) {
+  const body = bubble.querySelector(".body");
+  if (!body) return;
+  body.innerHTML = "";
+
+  if (message.deleted) {
+    const deleted = document.createElement("div");
+    deleted.className = "deleted-text";
+    deleted.textContent = "This message was unsent";
+    body.append(deleted);
+    return;
+  }
+
+  const payload = await decryptPayload(message.text);
+  if (payload.kind === "image") {
+    const image = document.createElement("img");
+    image.className = "chat-image";
+    image.alt = payload.name || "Encrypted image";
+    image.src = `data:${payload.mime || "image/jpeg"};base64,${payload.data}`;
+    body.append(image);
+    if (payload.caption) {
+      const caption = document.createElement("div");
+      caption.className = "text caption";
+      caption.textContent = payload.caption;
+      body.append(caption);
+    }
+  } else {
+    const text = document.createElement("div");
+    text.className = "text";
+    text.textContent = payload.text || "";
+    body.append(text);
+  }
+}
+
+async function refreshMessage(message) {
+  message = mergeMessage(message);
+  const bubble = messagesEl.querySelector(`[data-message-id="${CSS.escape(message.id)}"]`);
+  if (!bubble) {
+    await addMessage(message);
+    return;
+  }
+  await renderMessageBody(message, bubble);
+  bubble.classList.toggle("deleted", Boolean(message.deleted));
+  const edited = bubble.querySelector(".edited");
+  if (edited) edited.hidden = !message.editedAt || message.deleted;
+  updateMessageStatus(message);
+}
+
 async function addMessage(message) {
   message = mergeMessage(message);
-  if (messagesEl.querySelector(`[data-message-id="${CSS.escape(message.id)}"]`)) return;
+  if (messagesEl.querySelector(`[data-message-id="${CSS.escape(message.id)}"]`)) {
+    await refreshMessage(message);
+    return;
+  }
 
   removeEmpty();
   const bubble = document.createElement("article");
@@ -232,10 +290,10 @@ async function addMessage(message) {
     bubble.append(sender);
   }
 
-  const text = document.createElement("div");
-  text.className = "text";
-  text.textContent = await decryptText(message.text);
-  bubble.append(text);
+  const body = document.createElement("div");
+  body.className = "body";
+  bubble.append(body);
+  await renderMessageBody(message, bubble);
 
   const meta = document.createElement("div");
   meta.className = "meta";
@@ -244,12 +302,31 @@ async function addMessage(message) {
   time.textContent = formatTime(message.sentAt);
   meta.append(time);
 
+  const edited = document.createElement("span");
+  edited.className = "edited";
+  edited.textContent = "edited";
+  edited.hidden = !message.editedAt || message.deleted;
+  meta.append(edited);
+
   if (mine) {
     const receipt = document.createElement("span");
     receipt.className = "receipt";
     receipt.dataset.statusFor = message.id;
     receipt.textContent = statusText(message);
     meta.append(receipt);
+
+    const controls = document.createElement("div");
+    controls.className = "message-actions";
+    const edit = document.createElement("button");
+    edit.type = "button";
+    edit.textContent = "Edit";
+    edit.addEventListener("click", () => editMessage(message.id));
+    const unsend = document.createElement("button");
+    unsend.type = "button";
+    unsend.textContent = "Unsend";
+    unsend.addEventListener("click", () => unsendMessage(message.id));
+    controls.append(edit, unsend);
+    bubble.append(controls);
   }
 
   bubble.append(meta);
@@ -257,6 +334,29 @@ async function addMessage(message) {
   messagesEl.scrollTop = messagesEl.scrollHeight;
 
   if (!mine) scheduleSeen();
+}
+
+async function editMessage(id) {
+  const message = state.messages.get(id);
+  if (!message || message.sender !== state.name || message.deleted) return;
+  const payload = await decryptPayload(message.text);
+  if (payload.kind !== "text") {
+    alert("Only text messages can be edited. Unsend this image and send it again.");
+    return;
+  }
+  const next = prompt("Edit message", payload.text || "");
+  if (next === null) return;
+  const text = next.trim();
+  if (!text) return;
+  const encrypted = await encryptPayload({ kind: "text", text });
+  await post("/edit", { room: state.room, sender: state.name, id, text: encrypted });
+}
+
+async function unsendMessage(id) {
+  const message = state.messages.get(id);
+  if (!message || message.sender !== state.name || message.deleted) return;
+  if (!confirm("Unsend this message for everyone?")) return;
+  await post("/delete", { room: state.room, sender: state.name, id });
 }
 
 function connect() {
@@ -277,6 +377,14 @@ function connect() {
 
   state.events.addEventListener("message", async (event) => {
     await addMessage(JSON.parse(event.data));
+  });
+
+  state.events.addEventListener("message_edit", async (event) => {
+    await refreshMessage(JSON.parse(event.data));
+  });
+
+  state.events.addEventListener("message_delete", async (event) => {
+    await refreshMessage(JSON.parse(event.data));
   });
 
   state.events.addEventListener("presence", (event) => {
@@ -310,6 +418,11 @@ async function post(path, body) {
   });
   if (!response.ok) throw new Error("Request failed");
   return response.json();
+}
+
+async function sendEncryptedPayload(payload) {
+  const encrypted = await encryptPayload(payload);
+  await post("/message", { room: state.room, sender: state.name, text: encrypted });
 }
 
 makeCode.addEventListener("click", async () => {
@@ -368,8 +481,35 @@ messageForm.addEventListener("submit", async (event) => {
   const text = messageInput.value.trim();
   if (!text) return;
   messageInput.value = "";
-  const encrypted = await encryptText(text);
-  await post("/message", { room: state.room, sender: state.name, text: encrypted });
+  await sendEncryptedPayload({ kind: "text", text });
+});
+
+imageButton.addEventListener("click", () => {
+  imageInput.click();
+});
+
+imageInput.addEventListener("change", async () => {
+  const file = imageInput.files && imageInput.files[0];
+  imageInput.value = "";
+  if (!file) return;
+  if (!file.type.startsWith("image/")) {
+    alert("Please select an image file.");
+    return;
+  }
+  if (file.size > MAX_IMAGE_BYTES) {
+    alert("Image is too large. Please choose an image under 2 MB.");
+    return;
+  }
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const caption = messageInput.value.trim();
+  messageInput.value = "";
+  await sendEncryptedPayload({
+    kind: "image",
+    mime: file.type,
+    name: file.name,
+    data: bytesToBase64Url(bytes).replace(/-/g, "+").replace(/_/g, "/"),
+    caption,
+  });
 });
 
 document.addEventListener("visibilitychange", () => {
